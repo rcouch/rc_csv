@@ -1,0 +1,12 @@
+{application, refuge_csv,
+ [
+  {description, "CSV import extension for Refuge"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { refuge_csv, []}},
+  {env, []}
+ ]}.
