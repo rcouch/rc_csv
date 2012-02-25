@@ -28,17 +28,32 @@ parse_qs(Req) ->
 
 %%
 
+%csv_req(Req, Db) ->
+%    Files = couch_httpd:parse_form(Req),
+%    ?LOG_DEBUG("Files: ~p", [Files]),
+%    couch_httpd:send_json(Req, {[ {foo, bar} ]}).
+
 csv_req(Req, Db) ->
     % TODO need to add authorization stuff here
     do_csv_req(Req, Db).
 
 do_csv_req(Req, Db) ->
-    Args = parse_qs(Req),
+    Args0 = parse_qs(Req),
     
-    couch_httpd:send_json(Req, {[
-        {tranform, Args#rcargs.transform},
-        {delimiter, list_to_binary([Args#rcargs.delimiter])}
-    ]}).
+    StreamingFun = streaming_fun(Req),
+    Args1 = Args0#rcargs{streaming_fun=StreamingFun},
+
+    case refuge_csv:import_csv_in_db(Db, Args1) of
+        ok ->
+            couch_httpd:send_json(Req, {[
+                {tranform, Args1#rcargs.transform},
+                {delimiter, list_to_binary([Args1#rcargs.delimiter])}
+            ]});
+        {error, Error} ->
+            throw({error, Error});
+        Unknown ->
+            throw({error, Unknown})
+    end.
 
 parse_qs(Key, Val, Args) ->
     case Key of
@@ -47,16 +62,34 @@ parse_qs(Key, Val, Args) ->
         "transform" ->
             Args#rcargs{transform=list_to_binary(Val)};
         "delimiter" ->
-            Binary = list_to_binary(Val),
-            case Binary of
-                <<D:8>> ->
-                    Args#rcargs{delimiter=D};
-                _ ->
-                    throw({query_parse_error, <<"Wrong delimiter format. Must be a single character">>})
-            end;
+            Args#rcargs{delimiter=parse_char(Val)};
         _  ->
             Args
     end.
+
+parse_char(Val) ->
+    Binary = list_to_binary(Val),
+    case Binary of
+        <<D:8>> ->
+            D;
+        _ ->
+            throw({query_parse_error, <<"Wrong delimiter format. Must be a single character">>})
+    end.
+
+streaming_fun(Req) ->
+    Fun = fun(Fun, InitState) ->
+        ChunkFun =
+            fun
+                ({0, _Footers}, Acc) ->
+                    Fun({eof}, Acc);
+                ({_Len, Chunk}, Acc) ->
+                    Fun({next, Chunk}, Acc)
+            end,
+
+        couch_httpd:recv_chunked(Req, 8192, ChunkFun, InitState)
+    end,
+
+    Fun.
 
 %% The End
     

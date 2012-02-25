@@ -4,6 +4,7 @@
 
 -record(rcargs, {
     transform,
-    delimiter = $,
+    delimiter = $,,
+    streaming_fun
 }).
 
