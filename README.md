@@ -12,9 +12,11 @@
 ## How to use it
 
 Create a db:
+
     curl -XPUT http://localhost:15984/foo
 
 Then import a CSV:
+
     curl -XPOST http://localhost:15984/foo/_csv --data-binary @./sample.csv
 
 ## Parameters
