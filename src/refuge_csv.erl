@@ -9,51 +9,43 @@
 -include_lib("refuge_csv/include/refuge_csv.hrl").
 
 -export([
-    import_csv_in_db/2, loop/2
+    import_csv_in_db/2
 ]).
 
 import_csv_in_db(Db, Args) ->
 
-    RowFunction = fun(NewLine, State) ->
-        ?LOG_DEBUG("I got a newLine: ~p", [NewLine]),
-        State
+    RowFunction = fun
+        ({eof}, State) ->
+            ?LOG_DEBUG("The stread has ended!", []),
+            State;
+        ({newline, NewLine}, State) ->
+            ?LOG_DEBUG("I got a newLine: ~p", [NewLine]),
+            State
     end,
-
-    ProcessingPid = spawn(?MODULE, loop, [RowFunction, []]),
-    ParsingPid = spawn(ecsv_parser, start_parsing, [ProcessingPid]),
 
     StreamProcessingFun = fun
-        ({eof}, Acc) ->
-%?LOG_DEBUG("The stream has ended", []),
-            ParsingPid ! {eof},
-            Acc;
-        ({next, Chunk}, Acc) ->
-%?LOG_DEBUG("Got a new chunk: ~p", [Chunk]),
-            F = fun(X) ->
-                ParsingPid ! {char, X},
-%?LOG_DEBUG("Sending a character ~p", [X]),
-                X
-            end,
-            << <<(F(X))>> || <<X>> <= Chunk >>,
-            Acc
+        ({eof}, State) ->
+            ecsv_parser:end_parsing(State);
+        ({next, Chunk}, State) ->
+            String = binary_to_list(Chunk),
+            lists:foldl(
+                fun(C, Acc) ->
+                    ecsv_parser:parse_with_character(clean_char_argument(C), Acc)
+                end,
+                State,
+                String
+            )
     end,
 
+    InitState = ecsv_parser:init(RowFunction, []),
+
     StreamingFun = Args#rcargs.streaming_fun,
-    spawn(fun() -> StreamingFun(StreamProcessingFun, []) end),
+    StreamingFun(StreamProcessingFun, InitState),
 
     ok.
 
-loop(RowFunction, State) ->
-    receive
-        % ignore empty row
-        {newline, [[]]} ->
-            loop(RowFunction, State);
-        % process a new row
-        {newline, NewLine} ->
-            NewState = RowFunction(NewLine, State),
-            loop(RowFunction, NewState);
-        % the parsing is done, time to stop
-        {done} ->
-            {ok, State}
-    end.
-
+%% @doc make sure that an integer denoting a char is returned instead of a string
+clean_char_argument([CharInt | _]) ->
+    CharInt;
+clean_char_argument(CharInt) when is_integer(CharInt) ->
+    CharInt.
