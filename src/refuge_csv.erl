@@ -13,36 +13,33 @@
 ]).
 
 import_csv_in_db(Db, Args) ->
-
-    RowFunction = fun
-        ({eof}, State) ->
-            ?LOG_DEBUG("The stread has ended!", []),
-            State;
-        ({newline, NewLine}, State) ->
-            ?LOG_DEBUG("I got a newLine: ~p", [NewLine]),
-            State
-    end,
-
-    StreamProcessingFun = fun
-        ({eof}, State) ->
-            ecsv_parser:end_parsing(State);
-        ({next, Chunk}, State) ->
-            String = binary_to_list(Chunk),
-            lists:foldl(
-                fun(C, Acc) ->
-                    ecsv_parser:parse_with_character(clean_char_argument(C), Acc)
-                end,
-                State,
-                String
-            )
-    end,
-
-    InitState = ecsv_parser:init(RowFunction, []),
+    InitState = ecsv_parser:init(fun process_csv_row/2, []),
 
     StreamingFun = Args#rcargs.streaming_fun,
-    StreamingFun(StreamProcessingFun, InitState),
+    StreamingFun(fun process_chunk/2, InitState),
 
     ok.
+
+% -----------------------------------------------------------------------------
+
+process_csv_row({eof}, State) ->
+    ?LOG_DEBUG("The stread has ended!", []),
+    State;
+process_csv_row({newline, NewLine}, State) ->
+    ?LOG_DEBUG("I got a newLine: ~p", [NewLine]),
+    State.
+
+process_chunk({eof}, State) ->
+    ecsv_parser:end_parsing(State);
+process_chunk({next, Chunk}, State) ->
+    String = binary_to_list(Chunk),
+    lists:foldl(
+        fun(C, Acc) ->
+            ecsv_parser:parse_with_character(clean_char_argument(C), Acc)
+        end,
+        State,
+        String
+    ).
 
 %% @doc make sure that an integer denoting a char is returned instead of a string
 clean_char_argument([CharInt | _]) ->
