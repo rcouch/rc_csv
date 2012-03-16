@@ -14,6 +14,7 @@
 
 -record(pstate, {
     db,
+    docs = [],
     headers = []
 }).
 
@@ -29,31 +30,29 @@ import_csv_in_db(Db, Args) ->
 
 % -----------------------------------------------------------------------------
 
-process_csv_row({eof}, State) ->
-    ?LOG_DEBUG("The stread has ended!", []),
-    State;
-process_csv_row({newline, NewLine}, #pstate{headers=Headers, db=Db}=State) ->
-    ?LOG_DEBUG("I got a newLine: ~p", [NewLine]),
+-define(BULK_SIZE, 500).
 
+process_csv_row({eof}, State) ->
+    State;
+process_csv_row({newline, NewLine}, #pstate{headers=Headers, docs=Docs, db=Db}=State) ->
     case Headers of
         [] ->
             State#pstate{headers=NewLine};
         _  ->
             % create a document from the header and the new row
-            {ok, InitialDoc} = make_initial_doc(Headers, NewLine),
+            {ok, Doc} = make_doc(Headers, NewLine),
+            Docs1 = [Doc|Docs],
 
-            % then transform it (if needed)
-            % TODO put the transformation here
-            % for now, no transformation yet
-            TransformedDoc = InitialDoc,
-
-            % and finally write the doc
-            {ok, _Rev} = couch_db:update_doc(Db, TransformedDoc, []),
-
-            State
+            if
+                length(Docs1) >= ?BULK_SIZE ->
+                    {ok, _Results} = couch_db:update_docs(Db, Docs1, []),
+                    State#pstate{docs=[]};
+                true ->
+                    State#pstate{docs=Docs1}
+            end
     end.
 
-make_initial_doc(Headers, Row) ->
+make_doc(Headers, Row) ->
     Props = lists:zipwith(
         fun(K, V) ->
             {iolist_to_binary(K), iolist_to_binary(V)}
@@ -64,8 +63,6 @@ make_initial_doc(Headers, Row) ->
 
     IdProp = {<<"_id">>, couch_uuids:new()},
     PropsWithId = [IdProp|Props],
-
-    ?LOG_DEBUG("New Document: ~p", [PropsWithId]),
 
     {ok, couch_doc:from_json_obj({PropsWithId})}.
 
