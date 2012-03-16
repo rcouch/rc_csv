@@ -32,8 +32,17 @@ import_csv_in_db(Db, Args) ->
 
 -define(BULK_SIZE, 500).
 
-process_csv_row({eof}, State) ->
-    State;
+maybe_save(Db, Docs, State, Minimum) ->
+    if
+        length(Docs) >= Minimum ->
+            {ok, _Results} = couch_db:update_docs(Db, Docs, []),
+            State#pstate{docs=[]};
+        true ->
+            State#pstate{docs=Docs}
+    end.
+
+process_csv_row({eof}, #pstate{docs=Docs, db=Db}=State) ->
+    maybe_save(Db, Docs, State, 0);
 process_csv_row({newline, NewLine}, #pstate{headers=Headers, docs=Docs, db=Db}=State) ->
     case Headers of
         [] ->
@@ -43,13 +52,7 @@ process_csv_row({newline, NewLine}, #pstate{headers=Headers, docs=Docs, db=Db}=S
             {ok, Doc} = make_doc(Headers, NewLine),
             Docs1 = [Doc|Docs],
 
-            if
-                length(Docs1) >= ?BULK_SIZE ->
-                    {ok, _Results} = couch_db:update_docs(Db, Docs1, []),
-                    State#pstate{docs=[]};
-                true ->
-                    State#pstate{docs=Docs1}
-            end
+            maybe_save(Db, Docs1, State, ?BULK_SIZE)
     end.
 
 make_doc(Headers, Row) ->
